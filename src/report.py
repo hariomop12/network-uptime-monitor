@@ -233,7 +233,7 @@ def generate_report(
 <body>
   <div class="wrap">
     <h1>{html.escape(title)}</h1>
-    <div class="sub">Report generated {html.escape(generated)} &middot; source: {html.escape(str(metrics_path))}</div>
+    <div class="sub">Report generated {html.escape(generated)}</div>
 
     <div class="cards">
       <div class="card"><div class="label">Hosts</div><div class="value">{len(summaries)}</div></div>

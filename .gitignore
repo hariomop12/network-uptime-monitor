@@ -10,6 +10,7 @@ env/
 logs/*.log
 logs/*.csv
 logs/*.json
+logs/*.html
 
 # ---- Python ----
 __pycache__/

@@ -27,6 +27,16 @@ network operations roles look for, demonstrated in a small, real, deployable too
 
 ---
 
+## 📸 Screenshot
+
+![HTML uptime report](docs/report.png)
+
+*`report.py` turns the metrics CSV into a standalone HTML status page: an overall
+uptime summary, per-host status badges, average latency and **latency sparklines** —
+no server or SaaS required.*
+
+---
+
 ## ✨ Features
 
 - 🔁 **Multi-host monitoring** — check any number of hosts **in parallel** (thread
@@ -91,6 +101,7 @@ network-uptime-monitor/
 │   └── report.py           # HTML report renderer
 ├── tests/                  # pytest unit tests
 ├── logs/                   # generated logs & metrics (git-ignored)
+├── docs/                   # screenshots used in this README
 ├── .gitignore
 ├── LICENSE
 └── README.md
