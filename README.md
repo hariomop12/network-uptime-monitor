@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)
 ![License](https://img.shields.io/badge/License-MIT-blue)
-![Status](https://img.shields.io/badge/Status-In%20Progress-orange)
+![Status](https://img.shields.io/badge/Status-MVP%20Working-brightgreen)
 
 A lightweight, self-hosted uptime monitor written in Python. It pings a list of
 hosts on a schedule, records **latency** and **packet loss** to disk, and fires
@@ -78,9 +78,37 @@ network-uptime-monitor/
 └── README.md
 ```
 
-> ⚠️ This repository is currently at the **scaffolding** stage — the structure,
-> configuration and docs are in place; the runtime modules (`monitor.py`,
-> `src/*.py`) are being built next. See [Roadmap](#-roadmap).
+## 🧩 How It Works (file by file)
+
+| File | Responsibility |
+| --- | --- |
+| **`monitor.py`** | Entry point / orchestrator. Parses CLI args, loads the config, then in a loop: ping each host → write metrics → raise alerts if state changed. `--once` runs a single cycle (cron-friendly); the default is continuous (systemd). |
+| **`src/config.py`** | Reads `config.yaml` + `.env`, merges per-host values over `defaults`, and returns validated dataclasses (`Host`, `LoggingConfig`, `AlertConfig`). |
+| **`src/pinger.py`** | Thin wrapper over `icmplib`. Runs the ICMP ping and normalises the result into a `PingResult` (`is_alive`, packet-loss %, min/avg/max RTT, jitter). Falls back to unprivileged mode automatically. |
+| **`src/logger.py`** | `setup_logger()` builds a rotating file + console logger; `MetricsWriter` appends one CSV row per ping for the time-series. |
+| **`src/alerts.py`** | Telegram & Email channels plus the `AlertManager`, which remembers each host's last state so you get **one** DOWN alert and **one** RECOVERY alert per incident — not a message every second. |
+| **`config.yaml`** | What to monitor and how (hosts, intervals, thresholds, channels). |
+| **`.env`** | Secrets only (Telegram token, SMTP credentials). Never committed. |
+
+### Flow of a single check
+
+```
+monitor.py
+└─ config.load_config()               # config.yaml + .env
+└─ for each host (respecting its interval):
+     ├─ pinger.ping_host()            # icmplib        -> PingResult
+     ├─ logger.MetricsWriter.write()  #                -> logs/metrics.csv
+     └─ alerts.AlertManager.evaluate()# state change?  -> Telegram / Email
+```
+
+### Alert behaviour
+
+- A host must fail **`retries` consecutive rounds** before it is considered DOWN
+  (prevents a single lost packet from paging you).
+- One **DOWN** alert per outage; one **RECOVERED** alert when it returns
+  (disable recovery alerts per host with `alert_recovery: false`).
+- A host that is **already down** when the monitor starts still triggers a DOWN
+  alert (unknown hosts are assumed UP on first sight).
 
 ---
 
@@ -187,10 +215,19 @@ cp .env.example .env
 
 ## ▶️ Usage
 
+Raw ICMP needs privileges, so prefix with `sudo` (or use the `setcap` route above):
+
 ```bash
 source .venv/bin/activate
-python monitor.py                 # run one monitoring cycle
-python monitor.py --config config.yaml   # explicit config path
+
+# Continuous mode — keeps running (good for systemd / manual testing)
+sudo ./.venv/bin/python monitor.py
+
+# Single cycle then exit (good for cron)
+sudo ./.venv/bin/python monitor.py --once
+
+# Custom config path
+sudo ./.venv/bin/python monitor.py --once --config /path/to/config.yaml
 ```
 
 Outputs land in `logs/`:
@@ -204,12 +241,15 @@ Outputs land in `logs/`:
 
 ### Option A — cron (every minute)
 
+Use `--once` so each cron tick runs exactly one cycle. To avoid needing root in
+cron, grant the capability once (see [ICMP permissions](#-icmp-permissions-important)):
+
 ```bash
 crontab -e
 ```
 
 ```cron
-* * * * * cd /home/hariom/project/network-uptime-monitor && ./.venv/bin/python monitor.py >> logs/cron.log 2>&1
+* * * * * cd /home/hariom/project/network-uptime-monitor && ./.venv/bin/python monitor.py --once >> logs/cron.log 2>&1
 ```
 
 ### Option B — systemd service
@@ -240,12 +280,12 @@ sudo systemctl enable --now uptime-monitor
 ## 🗺️ Roadmap
 
 - [x] Project scaffolding — structure, `config.yaml`, `.env.example`, docs
-- [ ] Ping engine (`src/pinger.py`) — latency & packet-loss stats
-- [ ] Logging (`src/logger.py`) — rotating log + CSV metrics
-- [ ] Alerting (`src/alerts.py`) — Email + Telegram with DOWN/UP state tracking
-- [ ] Entry point (`monitor.py`) — orchestration + CLI args
+- [x] Ping engine (`src/pinger.py`) — latency & packet-loss stats
+- [x] Logging (`src/logger.py`) — rotating log + CSV metrics
+- [x] Alerting (`src/alerts.py`) — Email + Telegram with DOWN/UP state tracking
+- [x] Entry point (`monitor.py`) — orchestration + CLI args
 - [ ] Unit tests (`pytest`)
-- [ ] Deployment docs refined (cron + systemd examples shipped)
+- [x] Deployment docs (cron + systemd examples shipped)
 - [ ] *Optional* — simple web dashboard / HTML report
 
 ---
