@@ -10,8 +10,8 @@ from src.alerts import (
     TelegramChannel,
     build_channels,
 )
+from src.checks import CheckResult
 from src.config import AlertConfig
-from src.pinger import PingResult
 from src.state import HostState, StateStore
 
 
@@ -26,12 +26,13 @@ class RecordingChannel:
 
 
 def result(name="web", alive=True, loss=0.0, error=None):
-    return PingResult(
+    return CheckResult(
         name=name,
         address="1.1.1.1",
+        kind="ping",
         is_alive=alive,
         packet_loss=loss,
-        avg_rtt=5.0,
+        latency_ms=5.0,
         error=error,
     )
 

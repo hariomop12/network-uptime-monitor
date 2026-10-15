@@ -3,12 +3,12 @@
 #  Edit this file to control what gets monitored and how.
 # ============================================================
 
-# Default ping behaviour applied to every host.
+# Default behaviour applied to every host.
 # Any host can override these values individually (see `hosts:` below).
 defaults:
   interval: 60        # seconds between monitoring rounds
-  timeout: 2          # seconds to wait for a single ICMP reply
-  count: 3            # ICMP echo requests sent per host, per round
+  timeout: 2          # seconds to wait for a reply / connection
+  count: 3            # ICMP echo requests sent per host, per round (ping only)
   retries: 2          # consecutive failed rounds before a host is marked DOWN
   alert_recovery: true  # also send an alert when a host comes back UP
   renotify_minutes: 0   # 0 = off; else re-alert every N minutes while DOWN
@@ -45,7 +45,12 @@ alerts:
     # TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are read from .env
 
 # ---- Hosts to monitor -----------------------------------------------------
+# `type` selects the check: ping (default) | tcp | http.
+#   ping -> uses `count`/`timeout`
+#   tcp  -> needs `port`
+#   http -> uses `url` (or address+port) and optional `expect_status`
 hosts:
+  # --- ICMP ping ---
   - name: Google DNS
     address: 8.8.8.8
     interval: 30
@@ -60,3 +65,17 @@ hosts:
     address: server.local
     timeout: 5
     count: 5
+
+  # --- TCP port check ---
+  - name: Local SSH
+    address: 192.168.1.1
+    type: tcp
+    port: 22
+
+  # --- HTTP(S) check (expect a 200) ---
+  - name: Public Website
+    address: example.com
+    type: http
+    url: https://example.com
+    expect_status: 200
+    timeout: 5

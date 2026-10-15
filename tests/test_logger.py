@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from src.checks import CheckResult
 from src.logger import CSV_HEADER, MetricsWriter, setup_logger
-from src.pinger import PingResult
 
 
 def test_metrics_writer_writes_header_then_rows(tmp_path):
@@ -13,11 +13,11 @@ def test_metrics_writer_writes_header_then_rows(tmp_path):
     writer = MetricsWriter(path)
 
     writer.write(
-        PingResult("web", "1.1.1.1", True, packets_sent=3, packets_received=3, avg_rtt=1.5),
+        CheckResult("web", "1.1.1.1", "ping", is_alive=True, latency_ms=1.5),
         "2026-01-01T00:00:00",
     )
     writer.write(
-        PingResult("web", "1.1.1.1", False, packet_loss=100.0),
+        CheckResult("web", "1.1.1.1", "ping", is_alive=False, packet_loss=100.0),
         "2026-01-01T00:01:00",
     )
 
@@ -30,7 +30,7 @@ def test_metrics_writer_writes_header_then_rows(tmp_path):
 
 def test_metrics_writer_creates_parent_dir(tmp_path):
     path = tmp_path / "nested" / "deeper" / "metrics.csv"
-    MetricsWriter(path).write(PingResult("web", "1.1.1.1", True), "t")
+    MetricsWriter(path).write(CheckResult("web", "1.1.1.1", is_alive=True), "t")
     assert path.exists()
 
 

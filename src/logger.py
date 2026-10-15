@@ -3,7 +3,7 @@
 Two responsibilities:
 
 * :func:`setup_logger` - a rotating, formatted application log (file + console).
-* :class:`MetricsWriter` - append one CSV row per ping for later analysis.
+* :class:`MetricsWriter` - append one CSV row per check for later analysis.
 """
 
 from __future__ import annotations
@@ -13,21 +13,18 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from .pinger import PingResult
+from .checks import CheckResult
 
 # Column order of the metrics CSV file.
 CSV_HEADER = [
     "timestamp",
     "name",
     "address",
+    "kind",
     "status",
-    "packets_sent",
-    "packets_received",
+    "latency_ms",
     "packet_loss_pct",
-    "min_rtt_ms",
-    "avg_rtt_ms",
-    "max_rtt_ms",
-    "jitter_ms",
+    "detail",
 ]
 
 
@@ -71,13 +68,13 @@ def setup_logger(
 
 
 class MetricsWriter:
-    """Append per-ping metrics to a CSV file (header written on demand)."""
+    """Append per-check metrics to a CSV file (header written on demand)."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def write(self, result: PingResult, timestamp: str) -> None:
+    def write(self, result: CheckResult, timestamp: str) -> None:
         """Write one row for ``result`` tagged with ``timestamp``."""
         needs_header = not self.path.exists() or self.path.stat().st_size == 0
 
@@ -90,13 +87,10 @@ class MetricsWriter:
                     timestamp,
                     result.name,
                     result.address,
+                    result.kind,
                     "UP" if result.is_alive else "DOWN",
-                    result.packets_sent,
-                    result.packets_received,
+                    f"{result.latency_ms:.2f}",
                     f"{result.packet_loss:.1f}",
-                    f"{result.min_rtt:.2f}",
-                    f"{result.avg_rtt:.2f}",
-                    f"{result.max_rtt:.2f}",
-                    f"{result.jitter:.2f}",
+                    result.detail,
                 ]
             )

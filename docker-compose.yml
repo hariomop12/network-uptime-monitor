@@ -1,0 +1,14 @@
+services:
+  uptime-monitor:
+    build: .
+    image: network-uptime-monitor:latest
+    container_name: uptime-monitor
+    restart: unless-stopped
+    # Raw ICMP sockets need this capability.
+    cap_add:
+      - NET_RAW
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs

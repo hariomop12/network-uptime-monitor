@@ -31,9 +31,9 @@ from pathlib import Path
 from types import FrameType
 
 from src.alerts import AlertManager, build_channels
+from src.checks import CheckResult, run_check
 from src.config import Config, ConfigError, Host, load_config
 from src.logger import MetricsWriter, setup_logger
-from src.pinger import PingResult, ping_host
 from src.state import StateStore
 
 _STOP = False
@@ -49,28 +49,26 @@ def _handle_stop(signum: int, frame: FrameType | None) -> None:
 # --------------------------------------------------------------------------- #
 #  Checking (parallel ping, serial logging/alerting)
 # --------------------------------------------------------------------------- #
-def _ping_batch(hosts: list[Host]) -> dict[str, PingResult]:
-    """Ping every host concurrently and return the results keyed by host name."""
-    results: dict[str, PingResult] = {}
+def _check_batch(hosts: list[Host]) -> dict[str, CheckResult]:
+    """Run every host's check concurrently and return results by host name."""
+    results: dict[str, CheckResult] = {}
     if not hosts:
         return results
 
     workers = min(len(hosts), _MAX_WORKERS)
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(
-                ping_host, host.name, host.address, host.count, host.timeout
-            ): host
-            for host in hosts
+            executor.submit(run_check, host): host for host in hosts
         }
         for future in as_completed(futures):
             host = futures[future]
             try:
                 results[host.name] = future.result()
-            except Exception as exc:  # noqa: BLE001 - defensive, ping_host shouldn't raise
-                results[host.name] = PingResult(
+            except Exception as exc:  # noqa: BLE001 - defensive, run_check shouldn't raise
+                results[host.name] = CheckResult(
                     name=host.name,
                     address=host.address,
+                    kind=host.kind,
                     is_alive=False,
                     error=f"{type(exc).__name__}: {exc}",
                 )
@@ -79,13 +77,13 @@ def _ping_batch(hosts: list[Host]) -> dict[str, PingResult]:
 
 def _process_result(
     host: Host,
-    result: PingResult,
+    result: CheckResult,
     logger,
     metrics: MetricsWriter,
     alerts: AlertManager,
     consecutive_failures: dict[str, int],
 ) -> None:
-    """Record one ping result and raise an alert if the state changed."""
+    """Record one check result and raise an alert if the state changed."""
     timestamp = datetime.now().isoformat(timespec="seconds")
     metrics.write(result, timestamp)
 
@@ -100,19 +98,18 @@ def _process_result(
 
     if result.is_alive:
         logger.info(
-            "%-16s UP    avg %.1f ms  loss %.1f%%",
-            host.name, result.avg_rtt, result.packet_loss,
+            "%-16s UP    %-4s %6.1f ms  %s",
+            host.name, result.kind, result.latency_ms, result.detail,
         )
     elif effective_alive:
         logger.warning(
-            "%-16s MISS  %d/%d failed round(s)  loss %.1f%%",
-            host.name, failures, host.retries, result.packet_loss,
+            "%-16s MISS  %-4s %d/%d failed round(s)",
+            host.name, result.kind, failures, host.retries,
         )
     else:
+        reason = result.error or result.detail or ""
         logger.error(
-            "%-16s DOWN  loss %.1f%%%s",
-            host.name, result.packet_loss,
-            f"  ({result.error})" if result.error else "",
+            "%-16s DOWN  %-4s %s", host.name, result.kind, reason,
         )
 
     alerts.evaluate(
@@ -130,8 +127,8 @@ def _run_batch(
     alerts: AlertManager,
     consecutive_failures: dict[str, int],
 ) -> None:
-    """Ping a group of hosts in parallel, then process the results in order."""
-    results = _ping_batch(hosts)
+    """Run a group of checks in parallel, then process the results in order."""
+    results = _check_batch(hosts)
     for host in hosts:
         _process_result(
             host, results[host.name], logger, metrics, alerts, consecutive_failures

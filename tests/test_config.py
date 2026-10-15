@@ -98,6 +98,34 @@ def test_state_and_renotify_options(tmp_path):
     assert cfg.hosts[0].renotify_minutes == 30
 
 
+def test_check_types(tmp_path):
+    sample = textwrap.dedent(
+        """
+        defaults:
+          interval: 60
+        hosts:
+          - {name: Web, address: example.org, type: http, url: "https://example.org", expect_status: 200}
+          - {name: SSH, address: 10.0.0.1, type: tcp, port: 22}
+          - {name: DNS, address: 8.8.8.8}
+        """
+    )
+    cfg = load_config(_write(tmp_path, sample))
+
+    web, ssh, dns = cfg.hosts
+    assert web.kind == "http"
+    assert web.url == "https://example.org"
+    assert web.expect_status == 200
+    assert ssh.kind == "tcp"
+    assert ssh.port == 22
+    assert dns.kind == "ping"
+
+
+def test_unknown_check_type_raises(tmp_path):
+    sample = "hosts:\n  - {name: X, address: 1.1.1.1, type: carrier-pigeon}\n"
+    with pytest.raises(ConfigError):
+        load_config(_write(tmp_path, sample))
+
+
 def test_missing_file_raises(tmp_path):
     with pytest.raises(ConfigError):
         load_config(tmp_path / "does-not-exist.yaml")

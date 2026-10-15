@@ -16,8 +16,8 @@ from typing import Protocol
 
 import requests
 
+from .checks import CheckResult
 from .config import AlertConfig
-from .pinger import PingResult
 from .state import HostState, StateStore
 
 log = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ class AlertManager:
     # -- main entry ------------------------------------------------------- #
     def evaluate(
         self,
-        result: PingResult,
+        result: CheckResult,
         is_alive: bool,
         alert_recovery: bool = True,
         renotify_minutes: int = 0,
@@ -180,18 +180,23 @@ class AlertManager:
 
         self._put_record(result.name, record)
 
-    def _dispatch(self, event: str, result: PingResult) -> None:
+    def _dispatch(self, event: str, result: CheckResult) -> None:
         subject = f"[{event}] {result.name} ({result.address})"
-        message = "\n".join(
-            [
-                f"Host: {result.name}",
-                f"Address: {result.address}",
-                f"Status: {'UP' if result.is_alive else 'DOWN'}",
-                f"Packet loss: {result.packet_loss:.1f}%",
-                f"Latency: {result.avg_rtt:.1f} ms",
-                *([f"Note: {result.error}"] if result.error else []),
-            ]
-        )
+
+        lines = [
+            f"Host: {result.name}",
+            f"Address: {result.address}",
+            f"Check: {result.kind}",
+            f"Status: {'UP' if result.is_alive else 'DOWN'}",
+            f"Latency: {result.latency_ms:.1f} ms",
+        ]
+        if result.kind == "ping":
+            lines.append(f"Packet loss: {result.packet_loss:.1f}%")
+        if result.detail:
+            lines.append(f"Detail: {result.detail}")
+        if result.error:
+            lines.append(f"Note: {result.error}")
+        message = "\n".join(lines)
 
         if not self.channels:
             self.log.warning("%s alert for %s (no channels configured)", event, result.name)

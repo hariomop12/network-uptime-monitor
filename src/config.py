@@ -15,6 +15,8 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from .checks import KINDS
+
 
 class ConfigError(Exception):
     """Raised when the configuration file is missing or invalid."""
@@ -25,10 +27,14 @@ class ConfigError(Exception):
 # --------------------------------------------------------------------------- #
 @dataclass
 class Host:
-    """A single host to monitor, with its resolved ping settings."""
+    """A single host to monitor, with its resolved check settings."""
 
     name: str
     address: str
+    kind: str = "ping"            # ping | tcp | http
+    port: int | None = None       # tcp / http
+    url: str | None = None        # http (overrides address/port)
+    expect_status: int | None = None  # http (default: any 2xx/3xx)
     interval: int = 60
     timeout: float = 2
     count: int = 3
@@ -117,9 +123,25 @@ def _build_host(entry: dict[str, Any], defaults: dict[str, Any]) -> Host:
         raise ConfigError(f"Each host needs at least an 'address': {entry!r}")
 
     merged = {**defaults, **entry}  # per-host values override defaults
+
+    kind = str(merged.get("type", merged.get("kind", "ping"))).lower()
+    if kind not in KINDS:
+        raise ConfigError(
+            f"Unknown check type {kind!r} for host "
+            f"{merged.get('name') or merged.get('address')!r} (use one of {KINDS})"
+        )
+
+    port = merged.get("port")
+    expect_status = merged.get("expect_status")
+    url = merged.get("url")
+
     return Host(
         name=str(merged.get("name") or merged["address"]),
         address=str(merged["address"]),
+        kind=kind,
+        port=int(port) if port is not None else None,
+        url=str(url) if url else None,
+        expect_status=int(expect_status) if expect_status is not None else None,
         interval=int(merged.get("interval", 60)),
         timeout=float(merged.get("timeout", 2)),
         count=int(merged.get("count", 3)),

@@ -3,8 +3,9 @@
 Modules
 -------
 config  : load & validate ``config.yaml`` + ``.env``
-pinger  : ICMP ping wrapper (latency / packet-loss stats)
+checks  : host checks - ICMP ping, TCP port and HTTP(S)
 logger  : rotating application log + CSV metrics writer
+state   : JSON state store (survives restarts)
 alerts  : Email / Telegram alert channels with DOWN->UP state tracking
 """
 
