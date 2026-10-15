@@ -4,6 +4,7 @@
 ![Platform](https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 ![Status](https://img.shields.io/badge/Status-MVP%20Working-brightgreen)
+![tests](https://github.com/hariomop12/network-uptime-monitor/actions/workflows/tests.yml/badge.svg)
 
 A lightweight, self-hosted uptime monitor written in Python. It pings a list of
 hosts on a schedule, records **latency** and **packet loss** to disk, and fires
@@ -204,6 +205,8 @@ cp .env.example .env
    `https://api.telegram.org/bot<TOKEN>/getUpdates` and copy `chat.id`
    into `TELEGRAM_CHAT_ID`.
 4. Set `alerts.telegram.enabled: true` in `config.yaml`.
+5. Verify: `sudo ./.venv/bin/python monitor.py --test-alert` — you should get a
+   message on Telegram.
 
 ### Email (SMTP)
 
@@ -228,12 +231,27 @@ sudo ./.venv/bin/python monitor.py --once
 
 # Custom config path
 sudo ./.venv/bin/python monitor.py --once --config /path/to/config.yaml
+
+# Verify your Telegram/Email setup with one test alert
+sudo ./.venv/bin/python monitor.py --test-alert
 ```
 
 Outputs land in `logs/`:
 
 - `logs/monitor.log` — human-readable rotating log
 - `logs/metrics.csv` — per-round latency / packet-loss time-series
+
+---
+
+## 🧪 Testing
+
+```bash
+pytest -q
+```
+
+Unit tests cover config loading/merging, the ping wrapper (icmplib is mocked,
+so no network is required) and the alert DOWN→UP state machine. CI runs them on
+every push via GitHub Actions.
 
 ---
 
@@ -284,7 +302,7 @@ sudo systemctl enable --now uptime-monitor
 - [x] Logging (`src/logger.py`) — rotating log + CSV metrics
 - [x] Alerting (`src/alerts.py`) — Email + Telegram with DOWN/UP state tracking
 - [x] Entry point (`monitor.py`) — orchestration + CLI args
-- [ ] Unit tests (`pytest`)
+- [x] Unit tests (`pytest`)
 - [x] Deployment docs (cron + systemd examples shipped)
 - [ ] *Optional* — simple web dashboard / HTML report
 

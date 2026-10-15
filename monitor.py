@@ -102,6 +102,29 @@ def run_forever(config: Config, logger, metrics: MetricsWriter, alerts: AlertMan
         time.sleep(1)  # 1-second tick keeps per-host intervals responsive
 
 
+def _send_test_alert(alerts: AlertManager, logger) -> int:
+    """Fire a dummy alert through every configured channel (connectivity test)."""
+    if not alerts.channels:
+        logger.error(
+            "No alert channels configured - fill .env and enable a channel "
+            "in config.yaml."
+        )
+        return 1
+
+    subject = "[TEST] Network Uptime Monitor"
+    message = "Test alert - if you are reading this, your alert channel works."
+
+    failures = 0
+    for channel in alerts.channels:
+        try:
+            channel.send(subject, message)
+            logger.info("Test alert sent via %s", type(channel).__name__)
+        except Exception as exc:  # noqa: BLE001 - report and keep going
+            failures += 1
+            logger.error("Test alert via %s failed: %s", type(channel).__name__, exc)
+    return 1 if failures else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Automated Network Uptime Monitor with alerting."
@@ -115,6 +138,11 @@ def main(argv: list[str] | None = None) -> int:
         "--once",
         action="store_true",
         help="Run a single monitoring cycle and exit (good for cron).",
+    )
+    parser.add_argument(
+        "--test-alert",
+        action="store_true",
+        help="Send a test alert through the configured channels and exit.",
     )
     args = parser.parse_args(argv)
 
@@ -137,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not alerts.channels:
         logger.warning("No alert channels are enabled/configured.")
+
+    if args.test_alert:
+        return _send_test_alert(alerts, logger)
 
     mode = "single cycle" if args.once else "continuous"
     logger.info(
