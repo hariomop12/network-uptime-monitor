@@ -16,10 +16,15 @@ SAMPLE = textwrap.dedent(
       count: 2
       retries: 3
       alert_recovery: false
+      renotify_minutes: 30
 
     logging:
       log_dir: mylogs
       log_level: DEBUG
+
+    state:
+      enabled: true
+      file: state.json
 
     alerts:
       telegram:
@@ -83,6 +88,14 @@ def test_secrets_are_read_from_environment(tmp_path, monkeypatch):
     assert cfg.alerts.telegram_chat_id == "42"
     assert cfg.alerts.smtp_user == "me@test"
     assert cfg.alerts.from_addr == "me@test"  # falls back to SMTP_USER
+
+
+def test_state_and_renotify_options(tmp_path):
+    cfg = load_config(_write(tmp_path, SAMPLE))
+
+    assert cfg.state.enabled is True
+    assert cfg.state.file == "state.json"
+    assert cfg.hosts[0].renotify_minutes == 30
 
 
 def test_missing_file_raises(tmp_path):

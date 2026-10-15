@@ -34,6 +34,7 @@ class Host:
     count: int = 3
     retries: int = 2
     alert_recovery: bool = True
+    renotify_minutes: int = 0  # 0 = disabled; else re-alert while a host stays DOWN
 
 
 @dataclass
@@ -44,6 +45,12 @@ class LoggingConfig:
     max_bytes: int = 5 * 1024 * 1024
     backup_count: int = 5
     metrics_csv: str = "metrics.csv"
+
+
+@dataclass
+class StateConfig:
+    enabled: bool = True
+    file: str = "logs/state.json"
 
 
 @dataclass
@@ -68,6 +75,7 @@ class Config:
     hosts: list[Host]
     logging: LoggingConfig
     alerts: AlertConfig
+    state: StateConfig
     base_dir: Path
 
 
@@ -96,6 +104,7 @@ def load_config(path: str | os.PathLike = "config.yaml") -> Config:
         hosts=hosts,
         logging=_build_logging(raw.get("logging") or {}),
         alerts=_build_alerts(raw.get("alerts") or {}),
+        state=_build_state(raw.get("state") or {}),
         base_dir=config_path.resolve().parent,
     )
 
@@ -116,6 +125,7 @@ def _build_host(entry: dict[str, Any], defaults: dict[str, Any]) -> Host:
         count=int(merged.get("count", 3)),
         retries=int(merged.get("retries", 2)),
         alert_recovery=bool(merged.get("alert_recovery", True)),
+        renotify_minutes=int(merged.get("renotify_minutes", 0)),
     )
 
 
@@ -127,6 +137,13 @@ def _build_logging(raw: dict[str, Any]) -> LoggingConfig:
         max_bytes=int(raw.get("max_bytes", 5 * 1024 * 1024)),
         backup_count=int(raw.get("backup_count", 5)),
         metrics_csv=str(raw.get("metrics_csv", "metrics.csv")),
+    )
+
+
+def _build_state(raw: dict[str, Any]) -> StateConfig:
+    return StateConfig(
+        enabled=bool(raw.get("enabled", True)),
+        file=str(raw.get("file", "logs/state.json")),
     )
 
 

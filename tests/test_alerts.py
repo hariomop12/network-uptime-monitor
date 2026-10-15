@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from src.alerts import (
     AlertManager,
     EmailChannel,
@@ -10,6 +12,7 @@ from src.alerts import (
 )
 from src.config import AlertConfig
 from src.pinger import PingResult
+from src.state import HostState, StateStore
 
 
 class RecordingChannel:
@@ -115,3 +118,58 @@ def test_no_channels_does_not_crash():
     manager = AlertManager([])
     manager.evaluate(result(alive=True), True)
     manager.evaluate(result(alive=False), False)  # just logs a warning
+
+
+def test_state_persists_across_restart(tmp_path):
+    path = tmp_path / "state.json"
+
+    first = RecordingChannel()
+    manager = AlertManager([first], state_store=StateStore(path))
+    manager.evaluate(result(alive=True), True)
+    manager.evaluate(result(alive=False, loss=100.0), False)
+    assert [s for s, _ in first.messages] == ["[DOWN] web (1.1.1.1)"]
+
+    # Simulate a restart: brand-new manager + channel, same state file.
+    second = RecordingChannel()
+    restarted = AlertManager([second], state_store=StateStore(path))
+    restarted.evaluate(result(alive=False, loss=100.0), False)  # still down
+    assert second.messages == []                                # no repeat
+
+    restarted.evaluate(result(alive=True), True)                # recovers
+    assert [s for s, _ in second.messages] == ["[RECOVERED] web (1.1.1.1)"]
+
+
+def test_renotify_fires_after_cooldown(tmp_path):
+    store = StateStore(tmp_path / "state.json")
+    old = (datetime.now() - timedelta(minutes=31)).isoformat(timespec="seconds")
+    store.set("web", HostState(is_alive=False, since=old, last_alert_at=old))
+
+    channel = RecordingChannel()
+    manager = AlertManager([channel], state_store=store)
+
+    manager.evaluate(result(alive=False), False, renotify_minutes=30)
+    assert [s for s, _ in channel.messages] == ["[STILL DOWN] web (1.1.1.1)"]
+
+
+def test_renotify_silent_before_cooldown(tmp_path):
+    store = StateStore(tmp_path / "state.json")
+    recent = datetime.now().isoformat(timespec="seconds")
+    store.set("web", HostState(is_alive=False, since=recent, last_alert_at=recent))
+
+    channel = RecordingChannel()
+    manager = AlertManager([channel], state_store=store)
+
+    manager.evaluate(result(alive=False), False, renotify_minutes=30)
+    assert channel.messages == []
+
+
+def test_renotify_disabled_by_default(tmp_path):
+    store = StateStore(tmp_path / "state.json")
+    old = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
+    store.set("web", HostState(is_alive=False, since=old, last_alert_at=old))
+
+    channel = RecordingChannel()
+    manager = AlertManager([channel], state_store=store)
+
+    manager.evaluate(result(alive=False), False)  # renotify_minutes=0
+    assert channel.messages == []

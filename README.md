@@ -29,16 +29,20 @@ network operations roles look for, demonstrated in a small, real, deployable too
 
 ## ✨ Features
 
-- 🔁 **Multi-host monitoring** — ping any number of hosts concurrently, each with
-  its own interval.
+- 🔁 **Multi-host monitoring** — ping any number of hosts **in parallel** (thread
+  pool), each with its own interval.
 - 📉 **Latency & packet-loss tracking** — records min/avg/max RTT and loss % per round.
 - 🗂️ **File logging** — rotating application log + a CSV time-series for later analysis.
 - 🚨 **Smart alerting** — Email (SMTP) and Telegram, with **DOWN → UP** state
   tracking so you get *one* alert per incident, not a message every second.
-- ⏱️ **Flexible scheduling** — run with `cron` / `systemd timer`, or in-app via `schedule`.
+- 💾 **Persistent state** — remembers which hosts were DOWN, so restarting the
+  service does **not** re-send alerts.
+- 🔔 **Cooldown / re-notify** — optionally re-alert every N minutes while a host
+  stays down.
+- ⏱️ **Flexible scheduling** — run with `cron` / `systemd`, or in-app per-host intervals.
 - ⚙️ **Config-driven** — hosts, intervals, thresholds and channels live in `config.yaml`.
 - 🔐 **Secrets kept out of git** — all credentials are loaded from `.env`.
-- 🧪 **Testable** — clean module layout with `pytest`.
+- 🧪 **Tested** — 30 unit tests, wired into GitHub Actions CI.
 
 ---
 
@@ -71,6 +75,7 @@ network-uptime-monitor/
 │   ├── config.py           # load & validate config.yaml + .env
 │   ├── pinger.py           # ICMP ping, latency & packet-loss stats
 │   ├── logger.py           # rotating log + CSV metrics writer
+│   ├── state.py            # JSON state store (survives restarts)
 │   └── alerts.py           # Email (SMTP) & Telegram senders + state tracking
 ├── tests/                  # pytest unit tests
 ├── logs/                   # generated logs & metrics (git-ignored)
@@ -87,7 +92,8 @@ network-uptime-monitor/
 | **`src/config.py`** | Reads `config.yaml` + `.env`, merges per-host values over `defaults`, and returns validated dataclasses (`Host`, `LoggingConfig`, `AlertConfig`). |
 | **`src/pinger.py`** | Thin wrapper over `icmplib`. Runs the ICMP ping and normalises the result into a `PingResult` (`is_alive`, packet-loss %, min/avg/max RTT, jitter). Falls back to unprivileged mode automatically. |
 | **`src/logger.py`** | `setup_logger()` builds a rotating file + console logger; `MetricsWriter` appends one CSV row per ping for the time-series. |
-| **`src/alerts.py`** | Telegram & Email channels plus the `AlertManager`, which remembers each host's last state so you get **one** DOWN alert and **one** RECOVERY alert per incident — not a message every second. |
+| **`src/state.py`** | `StateStore` persists each host's last state (JSON) so a restart doesn't re-fire alerts, and remembers when the last alert was sent (for cooldown). |
+| **`src/alerts.py`** | Telegram & Email channels plus the `AlertManager`, which remembers each host's last state so you get **one** DOWN alert and **one** RECOVERY alert per incident — plus optional re-notify while down. |
 | **`config.yaml`** | What to monitor and how (hosts, intervals, thresholds, channels). |
 | **`.env`** | Secrets only (Telegram token, SMTP credentials). Never committed. |
 
@@ -110,6 +116,10 @@ monitor.py
   (disable recovery alerts per host with `alert_recovery: false`).
 - A host that is **already down** when the monitor starts still triggers a DOWN
   alert (unknown hosts are assumed UP on first sight).
+- Host state is **persisted** to `logs/state.json`, so restarting the service does
+  not repeat alerts for hosts that were already down.
+- Set `renotify_minutes` on a host (or in `defaults`) to get a **re-notify** while
+  it stays down — e.g. `renotify_minutes: 30`.
 
 ---
 
@@ -163,8 +173,9 @@ sudo setcap cap_net_raw+ep .venv/bin/python3
 
 Controls **what** is monitored and **how**:
 
-- `defaults` — global interval, timeout, retries, recovery alerts
+- `defaults` — global interval, timeout, retries, recovery + re-notify alerts
 - `logging` — log directory, rotation size, CSV file name, log level
+- `state` — where to persist host state across restarts (`enabled`, `file`)
 - `alerts` — enable/disable Email and Telegram channels
 - `hosts` — the list of hosts (name + address), each optionally overriding defaults
 
@@ -250,8 +261,8 @@ pytest -q
 ```
 
 Unit tests cover config loading/merging, the ping wrapper (icmplib is mocked,
-so no network is required) and the alert DOWN→UP state machine. CI runs them on
-every push via GitHub Actions.
+so no network is required), the state store, and the alert DOWN→UP/re-notify
+state machine. CI runs them on every push via GitHub Actions.
 
 ---
 
@@ -301,6 +312,9 @@ sudo systemctl enable --now uptime-monitor
 - [x] Ping engine (`src/pinger.py`) — latency & packet-loss stats
 - [x] Logging (`src/logger.py`) — rotating log + CSV metrics
 - [x] Alerting (`src/alerts.py`) — Email + Telegram with DOWN/UP state tracking
+- [x] State persistence (`src/state.py`) — no alert spam across restarts
+- [x] Concurrent pinging (thread pool) — hosts checked in parallel
+- [x] Cooldown / re-notify — periodic reminder while a host stays down
 - [x] Entry point (`monitor.py`) — orchestration + CLI args
 - [x] Unit tests (`pytest`)
 - [x] Deployment docs (cron + systemd examples shipped)

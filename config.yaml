@@ -11,6 +11,14 @@ defaults:
   count: 3            # ICMP echo requests sent per host, per round
   retries: 2          # consecutive failed rounds before a host is marked DOWN
   alert_recovery: true  # also send an alert when a host comes back UP
+  renotify_minutes: 0   # 0 = off; else re-alert every N minutes while DOWN
+
+# ---- Persisted host state (survives restarts) ----------------------------
+# Keeps a record of which hosts were DOWN so restarting the service does not
+# re-send alerts for hosts that were already down.
+state:
+  enabled: true
+  file: logs/state.json
 
 # ---- Where results are written -------------------------------------------
 logging:

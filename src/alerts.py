@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 import logging
 import smtplib
+from datetime import datetime
 from email.message import EmailMessage
 from typing import Protocol
 
@@ -17,6 +18,7 @@ import requests
 
 from .config import AlertConfig
 from .pinger import PingResult
+from .state import HostState, StateStore
 
 log = logging.getLogger(__name__)
 
@@ -91,32 +93,92 @@ class EmailChannel:
 #  Manager
 # --------------------------------------------------------------------------- #
 class AlertManager:
-    """Fan out alerts to every channel, but only on a state *change*."""
+    """Fan out alerts to every channel, but only on meaningful state changes.
 
-    def __init__(self, channels: list[Channel], logger: logging.Logger | None = None):
+    * one **DOWN** alert per outage
+    * one **RECOVERED** alert when the host returns (unless disabled)
+    * optional **re-notify** while a host stays down (``renotify_minutes``)
+
+    State is kept in a :class:`~src.state.StateStore` when one is supplied, so a
+    restart does **not** re-send alerts for hosts that were already down.
+    """
+
+    def __init__(
+        self,
+        channels: list[Channel],
+        logger: logging.Logger | None = None,
+        state_store: StateStore | None = None,
+    ):
         self.channels = channels
         self.log = logger or log
-        self._states: dict[str, bool] = {}
+        self.state = state_store
+        self._memory: dict[str, HostState] = {}  # fallback when no store is given
 
+    # -- state helpers ---------------------------------------------------- #
+    def _get_record(self, name: str) -> HostState | None:
+        if self.state is not None:
+            return self.state.get(name)
+        return self._memory.get(name)
+
+    def _put_record(self, name: str, record: HostState) -> None:
+        if self.state is not None:
+            self.state.set(name, record)
+            self.state.save()
+        else:
+            self._memory[name] = record
+
+    @staticmethod
+    def _cooldown_elapsed(last_alert_at: str, now: datetime, minutes: int) -> bool:
+        if not last_alert_at:
+            return True
+        try:
+            last = datetime.fromisoformat(last_alert_at)
+        except ValueError:
+            return True
+        return (now - last).total_seconds() >= minutes * 60
+
+    # -- main entry ------------------------------------------------------- #
     def evaluate(
         self,
         result: PingResult,
         is_alive: bool,
         alert_recovery: bool = True,
+        renotify_minutes: int = 0,
     ) -> None:
-        """Compare the new state with the previous one and alert if it changed.
+        """Update the host's state and alert on DOWN / RECOVERED / re-notify.
 
-        A host that is unknown at startup is treated as previously UP, so a
-        host that is already down when the monitor starts still raises a
-        DOWN alert.
+        A host that is unknown is assumed to have been UP, so a host that is
+        already down on the very first check still raises a DOWN alert.
         """
-        previous = self._states.get(result.name, True)
-        self._states[result.name] = is_alive
+        now = datetime.now()
+        stamp = now.isoformat(timespec="seconds")
 
-        if previous and not is_alive:
+        record = self._get_record(result.name)
+        previous_alive = record.is_alive if record else True
+        if record is None:
+            record = HostState(is_alive=is_alive, since=stamp)
+
+        if record.is_alive != is_alive:
+            record.is_alive = is_alive
+            record.since = stamp
+
+        if previous_alive and not is_alive:
             self._dispatch("DOWN", result)
-        elif not previous and is_alive and alert_recovery:
-            self._dispatch("RECOVERED", result)
+            record.last_alert_at = stamp
+        elif not previous_alive and is_alive:
+            if alert_recovery:
+                self._dispatch("RECOVERED", result)
+                record.last_alert_at = stamp
+        elif (
+            not previous_alive
+            and not is_alive
+            and renotify_minutes > 0
+            and self._cooldown_elapsed(record.last_alert_at, now, renotify_minutes)
+        ):
+            self._dispatch("STILL DOWN", result)
+            record.last_alert_at = stamp
+
+        self._put_record(result.name, record)
 
     def _dispatch(self, event: str, result: PingResult) -> None:
         subject = f"[{event}] {result.name} ({result.address})"

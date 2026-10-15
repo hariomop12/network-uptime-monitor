@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Network Uptime Monitor - entry point.
 
-Wires everything together: load config -> ping hosts -> log metrics -> alert.
+Wires everything together: load config -> ping hosts (in parallel) ->
+log metrics -> alert on state changes.
 
 Usage
 -----
     python monitor.py                 # continuous mode (systemd / manual)
     python monitor.py --once          # one cycle then exit (cron)
+    python monitor.py --test-alert    # send a test alert and exit
     python monitor.py --config my.yaml
 
 Note: raw ICMP needs privileges, so run with sudo or grant CAP_NET_RAW:
@@ -23,15 +25,19 @@ import os
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 from types import FrameType
 
 from src.alerts import AlertManager, build_channels
 from src.config import Config, ConfigError, Host, load_config
 from src.logger import MetricsWriter, setup_logger
-from src.pinger import ping_host
+from src.pinger import PingResult, ping_host
+from src.state import StateStore
 
 _STOP = False
+_MAX_WORKERS = 32
 
 
 def _handle_stop(signum: int, frame: FrameType | None) -> None:
@@ -40,15 +46,46 @@ def _handle_stop(signum: int, frame: FrameType | None) -> None:
     _STOP = True
 
 
-def check_host(
+# --------------------------------------------------------------------------- #
+#  Checking (parallel ping, serial logging/alerting)
+# --------------------------------------------------------------------------- #
+def _ping_batch(hosts: list[Host]) -> dict[str, PingResult]:
+    """Ping every host concurrently and return the results keyed by host name."""
+    results: dict[str, PingResult] = {}
+    if not hosts:
+        return results
+
+    workers = min(len(hosts), _MAX_WORKERS)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                ping_host, host.name, host.address, host.count, host.timeout
+            ): host
+            for host in hosts
+        }
+        for future in as_completed(futures):
+            host = futures[future]
+            try:
+                results[host.name] = future.result()
+            except Exception as exc:  # noqa: BLE001 - defensive, ping_host shouldn't raise
+                results[host.name] = PingResult(
+                    name=host.name,
+                    address=host.address,
+                    is_alive=False,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+    return results
+
+
+def _process_result(
     host: Host,
+    result: PingResult,
     logger,
     metrics: MetricsWriter,
     alerts: AlertManager,
     consecutive_failures: dict[str, int],
 ) -> None:
-    """Ping one host, record the result and raise alerts on state changes."""
-    result = ping_host(host.name, host.address, count=host.count, timeout=host.timeout)
+    """Record one ping result and raise an alert if the state changed."""
     timestamp = datetime.now().isoformat(timespec="seconds")
     metrics.write(result, timestamp)
 
@@ -78,28 +115,63 @@ def check_host(
             f"  ({result.error})" if result.error else "",
         )
 
-    alerts.evaluate(result, effective_alive, host.alert_recovery)
+    alerts.evaluate(
+        result,
+        effective_alive,
+        host.alert_recovery,
+        host.renotify_minutes,
+    )
+
+
+def _run_batch(
+    hosts: list[Host],
+    logger,
+    metrics: MetricsWriter,
+    alerts: AlertManager,
+    consecutive_failures: dict[str, int],
+) -> None:
+    """Ping a group of hosts in parallel, then process the results in order."""
+    results = _ping_batch(hosts)
+    for host in hosts:
+        _process_result(
+            host, results[host.name], logger, metrics, alerts, consecutive_failures
+        )
 
 
 def run_once(config: Config, logger, metrics: MetricsWriter, alerts: AlertManager) -> None:
     """Ping every host a single time (cron-friendly)."""
-    failures: dict[str, int] = {}
-    for host in config.hosts:
-        check_host(host, logger, metrics, alerts, failures)
+    _run_batch(config.hosts, logger, metrics, alerts, {})
 
 
 def run_forever(config: Config, logger, metrics: MetricsWriter, alerts: AlertManager) -> None:
-    """Loop forever, honouring each host's own interval."""
+    """Loop forever, pinging the hosts that are due (respecting each interval)."""
     failures: dict[str, int] = {}
     last_run: dict[str, float] = {host.name: 0.0 for host in config.hosts}
 
     while not _STOP:
         now = time.time()
-        for host in config.hosts:
-            if now - last_run[host.name] >= host.interval:
-                check_host(host, logger, metrics, alerts, failures)
+        due = [h for h in config.hosts if now - last_run[h.name] >= h.interval]
+        if due:
+            _run_batch(due, logger, metrics, alerts, failures)
+            for host in due:
                 last_run[host.name] = time.time()
         time.sleep(1)  # 1-second tick keeps per-host intervals responsive
+
+
+# --------------------------------------------------------------------------- #
+#  Helpers
+# --------------------------------------------------------------------------- #
+def _build_state_store(config: Config, logger) -> StateStore | None:
+    """Create the persistent state store, unless disabled in the config."""
+    if not config.state.enabled:
+        logger.info("State persistence is disabled - alerts may repeat after restart.")
+        return None
+
+    path = Path(config.state.file)
+    if not path.is_absolute():
+        path = config.base_dir / path
+    logger.info("Persisting host state to %s", path)
+    return StateStore(path)
 
 
 def _send_test_alert(alerts: AlertManager, logger) -> int:
@@ -125,6 +197,9 @@ def _send_test_alert(alerts: AlertManager, logger) -> int:
     return 1 if failures else 0
 
 
+# --------------------------------------------------------------------------- #
+#  Main
+# --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Automated Network Uptime Monitor with alerting."
@@ -161,7 +236,9 @@ def main(argv: list[str] | None = None) -> int:
         config.logging.backup_count,
     )
     metrics = MetricsWriter(log_dir / config.logging.metrics_csv)
-    alerts = AlertManager(build_channels(config.alerts, logger), logger)
+
+    state_store = _build_state_store(config, logger)
+    alerts = AlertManager(build_channels(config.alerts, logger), logger, state_store)
 
     if not alerts.channels:
         logger.warning("No alert channels are enabled/configured.")
