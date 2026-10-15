@@ -1,0 +1,30 @@
+# ---- Virtual environment ----
+.venv/
+venv/
+env/
+
+# ---- Secrets ----
+.env
+
+# ---- Generated logs & data ----
+logs/*.log
+logs/*.csv
+logs/*.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---- Editors / OS ----
+.DS_Store
+.idea/
+.vscode/
+*.swp

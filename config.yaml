@@ -1,0 +1,54 @@
+# ============================================================
+#  Network Uptime Monitor - Configuration
+#  Edit this file to control what gets monitored and how.
+# ============================================================
+
+# Default ping behaviour applied to every host.
+# Any host can override these values individually (see `hosts:` below).
+defaults:
+  interval: 60        # seconds between monitoring rounds
+  timeout: 2          # seconds to wait for a single ICMP reply
+  count: 3            # ICMP echo requests sent per host, per round
+  retries: 2          # consecutive failed rounds before a host is marked DOWN
+  alert_recovery: true  # also send an alert when a host comes back UP
+
+# ---- Where results are written -------------------------------------------
+logging:
+  log_dir: logs               # directory for all generated files
+  log_file: monitor.log       # human-readable, rotating application log
+  log_level: INFO             # DEBUG | INFO | WARNING | ERROR
+  max_bytes: 5242880          # rotate a log file after 5 MB
+  backup_count: 5             # number of rotated log files to keep
+  metrics_csv: metrics.csv    # time-series of latency / packet loss per host
+
+# ---- Alert channels -------------------------------------------------------
+# Credentials are NEVER stored here - they are read from the .env file.
+alerts:
+  email:
+    enabled: false
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    use_tls: true
+    from_addr: ""             # optional; falls back to SMTP_USER from .env
+    to_addrs:
+      - you@example.com
+  telegram:
+    enabled: true
+    # TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are read from .env
+
+# ---- Hosts to monitor -----------------------------------------------------
+hosts:
+  - name: Google DNS
+    address: 8.8.8.8
+    interval: 30
+
+  - name: Cloudflare DNS
+    address: 1.1.1.1
+
+  - name: Local Gateway
+    address: 192.168.1.1
+
+  - name: Local Server
+    address: server.local
+    timeout: 5
+    count: 5
